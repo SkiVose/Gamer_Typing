@@ -4,18 +4,20 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <map>
 #include <io.h>
-#include <Windows.h>
 #include <direct.h>
 #include <time.h>
+#include <algorithm>
+#include "netFetch.h"
+#include "gloVar.h"
 
+char* dirPath;
 char modePath[128];
 // = "D:\\wordhub\\*.csv";
 vector<string> files;
 bool checkMode = false;
 bool showAnno = true;
-
-time_t endts = 1623921300;
 
 // 读取csv文件
 bool ReadCsvdata(char* path) {
@@ -53,33 +55,98 @@ bool PrintWords() {
 	return true;
 }
 
-bool getFiles(char* path) {
+bool getFiles(char* path, vector<string> &vfiles, bool slient) {
 	long Handle;
 	struct _finddata_t FileInfo;
-	files.clear();
-	// cout << path << endl;
+	vfiles.clear();
+	cout << path << endl;
+	// system("pause");
 	if ((Handle = _findfirst(path, &FileInfo)) == -1L) {
-		CC(_WR);
-		cout << "[ERROR]";
-		CC(_WB_1);
-		printf("没有找到该CSV文件或目录不存在...\n");
+		if (!slient) {
+			CC(_WR);
+			cout << "[ERROR]";
+			CC(_WB_1);
+			printf("没有找到该CSV文件或目录不存在...\n");
+		}
 		return false;
 	}
 	else
 	{
 		// printf("%s\n", FileInfo.name);
-		files.push_back(FileInfo.name);
+		vfiles.push_back(FileInfo.name);
 		while (_findnext(Handle, &FileInfo) == 0)
 			// printf("%s\n", FileInfo.name);
-			files.push_back(FileInfo.name);
+			vfiles.push_back(FileInfo.name);
 		_findclose(Handle);
 	}
 	return true;
 }
 
-// choose界面
-bool ChoosePage(char *mPath) {
-	if (!getFiles(mPath)) {
+// 主界面
+bool mainPage() {
+	char ch;
+	while (1) {
+		fill(modePath, modePath + 128, 0);
+
+		system("cls");
+		CC(_WC);
+		cout << "<路径选择>";
+		CC(_WB_1);
+		cout << " ";
+
+		CC(_GB);
+		cout << "[1]_本地目录_";
+		CC(_WB_1);
+		cout << "  ";
+
+		CC(_GB);
+		cout << "[2]_下载目录_";
+		CC(_WB_1);
+		cout << "  ";
+
+		if (_network)
+			CC(_GB);
+		else
+			CC(_RB);
+		cout << "[3]_在线下载_";
+		CC(_WB_1);
+		cout << endl;
+
+		cout << "输入序号以选择: ";
+
+		ch = _getch();
+		if ((int)ch == 49) {
+			sprintf(modePath, "%s\\doc\\*.csv", dirPath);
+			localPage(modePath);
+		}
+		else if ((int)ch == 50) {
+			sprintf(modePath, "%s\\download\\*.csv", dirPath);
+			localPage(modePath);
+		}
+		else if ((int) ch == 51) {
+			if (_network) {
+				onlinePage();
+			}
+			else {
+				CC(_WR);
+				cout << "连接不可用";
+				Sleep(1000);
+				CC(_WB_1);
+			}
+		}
+		else {
+			CC(_WR);
+			cout << "无效输入";
+			Sleep(1000);
+			CC(_WB_1);
+		}
+	}
+}
+
+// 本地目录选择界面
+bool localPage(char *mPath) {
+	system("cls");
+	if (!getFiles(mPath, files, false)) {
 		// system("pause");
 		cout << "Press anykey to reload... ESC to exit.";
 		char ch = _getch();
@@ -88,7 +155,6 @@ bool ChoosePage(char *mPath) {
 			return true;
 		}
 		else {
-
 			system("cls");
 			return false;
 		}
@@ -150,7 +216,7 @@ bool ChoosePage(char *mPath) {
 		}
 		else if ((int)ch == 27) {
 			// ESC
-			// return true;
+			return true;
 		}
 		else if ((int)ch == 45) {
 			// -
@@ -161,6 +227,200 @@ bool ChoosePage(char *mPath) {
 			page = (page + 1) % tpage;
 		}
 	}
+}
+
+// 在线下载界面
+bool onlinePage() {
+	if (!_network) return false;
+	bool dlcheck = false;		// 下载检查
+	vector<string> dlfiles;		// 下载文件路径
+	char dlpath[128];			// 下载目录
+	char* relpath;				// 程序目录
+	if ((dirPath = _getcwd(NULL, 0)) == NULL) {
+		cout << "_getcwd Error!";
+		system("pause");
+		return false;
+	}
+	sprintf(dlpath, "%s\\download\\*.csv", dirPath);
+	// free(dirPath);
+
+	if (!getFiles(dlpath, dlfiles, true)) {
+		/*CC(_WR);
+		cout << "[ERROR]";
+		CC(_WB_1);
+		cout << "虽然不影响正常使用,但我还是要报错..." << endl;
+		system("pause");
+		return false;*/
+	}
+	else dlcheck = true;
+
+	CC(_WC);
+	cout << "[INFO]";
+	CC(_WB_1);
+	printf(" 正在请求远程文件列表");
+
+	stringstream ss;
+	string str;
+	int total = 0, times = 0, pos = -1;
+	_NetSendReq((char*)"0", _REQ_GL);		// 请求文件列表
+
+	for (int i = 0; i < 3; i++) {
+		cout << ".";
+		Sleep(1000);
+	}	// 等待3s
+
+	if (_swapFile(files) == false) {
+		_netstate == _REQ_NONE;
+		CC(_WR);
+		cout << "[ERROR]";
+		CC(_WB_1);
+		printf(" 获取线上文件列表失败...");
+		system("pause");
+		return false;
+	}
+	/*for (int i = 0; i < files.size(); i++) {
+		cout << files[i] << endl;
+	}cout << endl;*/
+	
+	// system("pause");
+
+	char ch;
+	int tmpIdx = 0;
+	int page = 0, tpage = files.size() / 3;
+	if (files.size() % 3 != 0) tpage++;
+	while (1) {
+		system("cls");
+		printf("请选择要下载的练习文档[%d/%d]:", page + 1, tpage);
+
+		for (int i = page * 3; i < (page + 1) * 3; i++) {
+			if (i >= files.size()) break;
+			if (dlcheck) {
+				vector<string>::iterator it = find(dlfiles.begin(), dlfiles.end(), files[i]);
+				if (it != dlfiles.end()) {
+					CC(_CB);
+					printf("[%d]%s    ", i + 1, files[i].c_str());
+				}
+				else {
+					CC(_GB);
+					printf("[%d]%s    ", i + 1, files[i].c_str());
+				}
+				CC(_WB_1);
+			}
+			else {
+				CC(_GB);
+				printf("[%d]%s    ", i + 1, files[i].c_str());
+				CC(_WB_1);
+			}
+			
+		}
+		printf("\n");
+
+		cout << " # ";
+		CC(_WC);
+		printf("[-]上一页, [=]下一页");
+		CC(_WB_1);
+		cout << " # ";
+		printf("输入文档前序号回车完成选择):");
+
+		if (tmpIdx != 0) {
+			CC(_YB);
+			printf("%d", tmpIdx);
+			CC(_WB_1);
+		}
+		ch = _getch();
+		if (isdigit(ch)) {
+			tmpIdx = tmpIdx * 10 + (int)(ch - '0');
+		}
+		else if ((int)ch == 8) {
+			// DEL
+			tmpIdx /= 10;
+		}
+		else if ((int)ch == 13) {
+			// ENTER
+			if (!_network) {
+				cout << endl;
+				CC(_WR);
+				cout << "[ERROR]";
+				CC(_WB_1);
+				printf(" 与服务器连接已断开...");
+				system("pause");
+				return false;
+			}
+
+			if (tmpIdx > 0 && tmpIdx <= files.size()) {
+				// 下载模块
+				_NetSendReq((char*)files[tmpIdx - 1].c_str(), _REQ_DL);		// 请求文件列表
+				// system("cls");
+				Sleep(3000);
+				if (_netFinish == _REQ_DL) {	// 正常结束
+					_netFinish = _REQ_NONE;
+					CC(_WC);
+					printf("DONE!");
+					CC(_WB_1);
+					system("pause");
+				}
+				else if(_netstate == _REQ_DL){	// 网络问题
+					_netstate = _REQ_NONE;
+					CC(_WR);
+					printf("DOWNLOAD FAID!");
+					CC(_WB_1);
+					system("pause");
+				}
+				else {
+					if (_retval == -1) {
+						cout << endl;
+						CC(_WR);
+						cout << "[ERROR]";
+						CC(_WB_1);
+						printf(" 该文件已存在...");
+						system("pause");
+					}
+					else if (_retval == -2) {
+						cout << endl;
+						CC(_WR);
+						cout << "[ERROR]";
+						CC(_WB_1);
+						cout << "文件无法打开!" << endl;
+						system("pause");
+					}
+					else {
+						cout << endl;
+						CC(_WR);
+						cout << "[ERROR]";
+						CC(_WB_1);
+						printf("某些原因导致不可用! [%d]", _retval);
+						system("pause");
+					}
+				}
+				tmpIdx = 0;
+			}
+			else {
+				cout << " ";
+				CC(_WR);
+				cout << "序号不存在";
+				CC(_WB_1);
+				Sleep(1000);
+			}
+
+			if (!getFiles(dlpath, dlfiles, true))
+				dlcheck = false;
+			else dlcheck = true;
+		}
+		else if ((int)ch == 27) {
+			// ESC
+			return true;
+		}
+		else if ((int)ch == 45) {
+			// -
+			page = (page + tpage - 1) % tpage;
+		}
+		else if ((int)ch == 61) {
+			// =
+			page = (page + 1) % tpage;
+		}
+	}
+
+	return true;
 }
 
 // type界面
@@ -404,6 +664,7 @@ void PrintHeader(string str, CountBoard *cb) {
 }
 
 void FinishType(CountBoard* cb) {
+
 	system("cls");
 	float rate = cb->right * 100.0 / cb->total;
 
@@ -444,89 +705,38 @@ bool CheckSpell(string str, CountBoard* cb) {
 	else return false;
 }
 
-void CC(char cs) {
-	if (cs == _WB_1)		// 黑底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE);
-	else if (cs == _WB_2)	// 蓝底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE | BACKGROUND_BLUE);
-	else if (cs == _WY)		// 黄底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE | BACKGROUND_RED | BACKGROUND_GREEN);
-	else if (cs == _WG)		// 绿底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE | BACKGROUND_GREEN);
-	else if (cs == _WC)		// 青底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE | BACKGROUND_GREEN | BACKGROUND_BLUE);
-	else if (cs == _WR)		// 红底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE | BACKGROUND_RED);
-	else if (cs == _WP)		// 粉底白字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN
-			| FOREGROUND_BLUE | BACKGROUND_RED | BACKGROUND_BLUE);
-
-
-	else if (cs == _BB)	// 黑底蓝字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_BLUE);
-	else if (cs == _YB)		// 黑底黄字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN);
-	else if (cs == _GB)		// 黑底绿字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_GREEN);
-	else if (cs == _CB)		// 黑底青字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_BLUE | FOREGROUND_GREEN);
-	else if (cs == _RB)		// 黑底红字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_RED);
-	else if (cs == _PB)		// 黑底粉字
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
-			FOREGROUND_INTENSITY | FOREGROUND_BLUE | FOREGROUND_RED);
-
-}
-
 void main() {
-	time_t checkTime = time(NULL);
-
-	system("mode con:cols=100 lines=2");
-
-	if (checkTime > endts) {
-		CC(_WR);
-		cout << "[TIMEOUT]";
-		CC(_WB_1);
-		cout << "无效时间...任意键退出...";
-		
-		char ch = _getch();
-		if ((int)ch != 9)
-			return;
-		system("cls");
-	}
+	system("mode con:cols=100 lines=3");
 	// ReadCsvdata(path);
 	// PrintWords();
 	// TypingPage();
-	char* dirPath;
-	if ((dirPath = _getcwd(NULL, 0)) == NULL)
+
+	if ((dirPath = _getcwd(NULL, 0)) == NULL) {
+		CC(_WR);
 		perror("_getcwd Error!");
-	else {
-		// cout << dirPath << endl;
-		sprintf(modePath, "%s\\doc\\*.csv", dirPath);
-		free(dirPath);
-		// cout << modePath << endl;
+		CC(_WB_1);
+		system("pause");
+		return;
 	}
 
+	if(!DLL_init()) {
+		CC(_WR);
+		perror("winsock malloc failed!");
+		CC(_WB_1);
+		system("pause");
+		return;
+	}
+
+	HANDLE NetThread = CreateThread(NULL, 0, _NetInit, 0, 0, NULL);
+	if (NetThread == NULL) {
+		cout << "[Thread Error]: TimerThread create failed." << endl;
+	}
+	else {
+		CloseHandle(NetThread);
+	}
+	Sleep(1000);
+
 	while (1) {
-		if (ChoosePage(modePath))
-			break;
+		mainPage();
 	}
 }
